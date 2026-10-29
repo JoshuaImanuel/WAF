@@ -1,0 +1,26 @@
+name: Pemindaian Kode Otomatis
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  analisis-keamanan:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Mengambil kode dari repositori
+      uses: actions/checkout@v4
+
+    - name: Menyiapkan lingkungan Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Memasang dependensi proyek
+      run: npm ci
+
+    - name: Menjalankan pemindai ESLint
+      run: npx eslint .
