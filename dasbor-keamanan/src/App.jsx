@@ -51,6 +51,7 @@ function App() {
             case 'XSS': return 'text-amber-400 bg-amber-400/10 border-amber-400/20';
             case 'Path Traversal': return 'text-orange-400 bg-orange-400/10 border-orange-400/20';
             case 'Honeypot Triggered': return 'text-purple-400 bg-purple-400/10 border-purple-400/20';
+            case 'Rate Limit Exceeded': return 'text-cyan-400 bg-cyan-400/10 border-cyan-400/20';
             default: return 'text-zinc-400 bg-zinc-400/10 border-zinc-400/20';
         }
     };

@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const rateLimit = require('express-rate-limit');
+
 const app = express();
 
 app.use(cors());
@@ -17,6 +19,39 @@ const logSchema = new mongoose.Schema({
 });
 
 const CatatanKeamanan = mongoose.model('CatatanKeamanan', logSchema);
+
+// Konfigurasi Rate Limiter diletakkan setelah deklarasi model CatatanKeamanan
+const wafRateLimiter = rateLimit({
+    windowMs: 60 * 1000, // Jendela waktu: 1 menit
+    max: 15, // Maksimal 15 request per IP dalam 1 menit
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => req.path === '/api/logs',
+    handler: async (req, res) => {
+        const ip = req.ip || req.connection.remoteAddress;
+        const target = req.originalUrl;
+
+        try {
+            await CatatanKeamanan.create({
+                jenisSerangan: 'Rate Limit Exceeded',
+                targetURL: target,
+                alamatIP: ip,
+                waktu: new Date()
+            });
+            console.log(`[RATE LIMIT] IP ${ip} melebihi batas request pada${target}`);
+        } catch (err) {
+            console.error('Gagal menyimpan log rate limit:', err);
+        }
+
+        res.status(429).json({
+            status: 'blocked',
+            message: 'Too many requests. Access temporarily restricted by WAF.'
+        });
+    }
+});
+
+// Middleware penyaring dipasang berurutan sebelum route endpoint
+app.use(wafRateLimiter);
 
 const wafMiddleware = async (req, res, next) => {
     const sqlInjectionPattern = /(\b(SELECT|UPDATE|DELETE|INSERT|DROP|ALTER)\b)|('|"|;|--)/i;
@@ -35,7 +70,7 @@ const wafMiddleware = async (req, res, next) => {
         });
         await logBaru.save();
         
-        console.log(`[PERINGATAN] Serangan ${threatType} terdeteksi pada URL: ${url}`);
+        console.log(`[PERINGATAN] Serangan ${threatType} terdeteksi pada URL:${url}`);
         return res.status(403).send("Akses Ditolak: Aktivitas mencurigakan terdeteksi.");
     }
     next();
@@ -43,6 +78,7 @@ const wafMiddleware = async (req, res, next) => {
 
 app.use(wafMiddleware);
 
+// Route endpoints
 app.get('/wp-admin', async (req, res) => {
     const logBaru = new CatatanKeamanan({
         jenisSerangan: 'Honeypot Triggered',
