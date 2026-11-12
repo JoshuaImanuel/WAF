@@ -1,24 +1,26 @@
-import React, { useState, useEffect } from 'react';
-import { Shield, AlertCircle, Terminal, Activity, Clock, ArrowUpDown } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Shield, AlertCircle, Terminal, Activity, Clock, ArrowUpDown, Lock, LogOut } from 'lucide-react';
 
 function App() {
+    const [token, setToken] = useState(localStorage.getItem('waf_token') || '');
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [loginError, setLoginError] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+
     const [logs, setLogs] = useState([]);
-    const [sortOrder, setSortOrder] = useState('newest'); // State untuk filter
+    const [sortOrder, setSortOrder] = useState('newest');
     const [stats, setStats] = useState({
         total: 0,
         terakhir: '-',
         dominan: '-'
     });
 
-    const fetchLogs = () => {
-        fetch('http://localhost:3000/api/logs')
-            .then(response => response.json())
-            .then(data => {
-                setLogs(data);
-                kalkulasiStatistik(data);
-            })
-            .catch(error => console.error("Gagal mengambil data log:", error));
-    };
+    const handleLogout = useCallback(() => {
+        localStorage.removeItem('waf_token');
+        setToken('');
+        setLogs([]);
+    }, []);
 
     const kalkulasiStatistik = (data) => {
         if (data.length === 0) return;
@@ -39,11 +41,63 @@ function App() {
         setStats({ total, terakhir: waktuTerakhir, dominan: ancamanDominan });
     };
 
+    const fetchLogs = useCallback(() => {
+        if (!token) return;
+
+        fetch('http://localhost:3000/api/logs', {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        })
+            .then(response => {
+                if (response.status === 401 || response.status === 403) {
+                    handleLogout();
+                    throw new Error('Session expired');
+                }
+                return response.json();
+            })
+            .then(data => {
+                setLogs(data);
+                kalkulasiStatistik(data);
+            })
+            .catch(error => console.error("Gagal mengambil data log:", error));
+    }, [token, handleLogout]);
+
     useEffect(() => {
+        if (!token) return;
         fetchLogs();
         const interval = setInterval(fetchLogs, 5000);
         return () => clearInterval(interval);
-    }, []);
+    }, [token, fetchLogs]);
+
+    const handleLogin = async (e) => {
+        e.preventDefault();
+        setLoginError('');
+        setIsLoading(true);
+
+        try {
+            const response = await fetch('http://localhost:3000/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                setLoginError(data.message || 'Authentication failed.');
+            } else {
+                localStorage.setItem('waf_token', data.token);
+                setToken(data.token);
+                setUsername('');
+                setPassword('');
+            }
+        } catch {
+            setLoginError('Unable to connect to WAF server.');
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     const getBadgeStyle = (jenis) => {
         switch(jenis) {
@@ -56,7 +110,60 @@ function App() {
         }
     };
 
-    // Logika pengurutan data berdasarkan state sortOrder
+    // Tampilan Login Gate jika belum terautentikasi
+    if (!token) {
+        return (
+            <div className="min-h-screen bg-zinc-950 text-zinc-300 font-sans flex items-center justify-center px-4 selection:bg-zinc-800">
+                <div className="w-full max-w-sm bg-zinc-900/50 border border-zinc-800/80 rounded-xl p-6 space-y-6">
+                    <div className="flex flex-col items-center text-center space-y-2">
+                        <div className="p-2.5 bg-zinc-900 border border-zinc-800 rounded-lg">
+                            <Lock className="w-5 h-5 text-zinc-100" />
+                        </div>
+                        <h1 className="text-base font-semibold text-zinc-100 tracking-wide">WAF Console Access</h1>
+                        <p className="text-xs text-zinc-500">Authenticate to view security telemetry</p>
+                    </div>
+
+                    <form onSubmit={handleLogin} className="space-y-4">
+                        {loginError && (
+                            <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-xs text-red-400 text-center">
+                                {loginError}
+                            </div>
+                        )}
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-medium text-zinc-400">Username</label>
+                            <input
+                                type="text"
+                                required
+                                value={username}
+                                onChange={(e) => setUsername(e.target.value)}
+                                className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-zinc-600 transition-colors"
+                                placeholder="admin"
+                            />
+                        </div>
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-medium text-zinc-400">Password</label>
+                            <input
+                                type="password"
+                                required
+                                value={password}
+                                onChange={(e) => setPassword(e.target.value)}
+                                className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-zinc-600 transition-colors"
+                                placeholder="••••••••"
+                            />
+                        </div>
+                        <button
+                            type="submit"
+                            disabled={isLoading}
+                            className="w-full py-2 px-4 bg-zinc-100 hover:bg-zinc-200 text-zinc-950 font-semibold text-xs rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                            {isLoading ? 'Authenticating...' : 'Sign In'}
+                        </button>
+                    </form>
+                </div>
+            </div>
+        );
+    }
+
     const sortedLogs = [...logs].sort((a, b) => {
         if (sortOrder === 'newest') {
             return new Date(b.waktu) - new Date(a.waktu);
@@ -77,9 +184,19 @@ function App() {
                         <span className="text-zinc-700 mx-2">/</span>
                         <span className="text-xs font-mono text-zinc-500">production-env</span>
                     </div>
-                    <div className="flex items-center gap-2 px-3 py-1 bg-zinc-900 border border-zinc-800 rounded-full">
-                        <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                        <span className="text-xs font-medium text-zinc-300">System Online</span>
+                    <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2 px-3 py-1 bg-zinc-900 border border-zinc-800 rounded-full">
+                            <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                            <span className="text-xs font-medium text-zinc-300">System Online</span>
+                        </div>
+                        <button
+                            onClick={handleLogout}
+                            className="flex items-center gap-1.5 px-3 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-md text-xs text-zinc-400 hover:text-zinc-200 transition-colors cursor-pointer"
+                            title="Sign Out"
+                        >
+                            <LogOut className="w-3.5 h-3.5" />
+                            <span>Logout</span>
+                        </button>
                     </div>
                 </div>
             </header>
@@ -119,7 +236,6 @@ function App() {
                             <h2 className="text-sm font-semibold text-zinc-200">Security Events Log</h2>
                         </div>
                         
-                        {/* Area Filter dan Status Sync */}
                         <div className="flex items-center gap-4">
                             <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-md px-2 py-1">
                                 <ArrowUpDown className="w-3 h-3 text-zinc-500" />
