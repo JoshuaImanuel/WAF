@@ -13,6 +13,8 @@ app.use(express.json());
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_key';
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
+const DISCORD_USER_ID = process.env.DISCORD_USER_ID;
 
 mongoose.connect('mongodb://127.0.0.1:27017/waf_security')
     .then(() => console.log('Terhubung ke basis data MongoDB'))
@@ -26,6 +28,49 @@ const logSchema = new mongoose.Schema({
 });
 
 const CatatanKeamanan = mongoose.model('CatatanKeamanan', logSchema);
+
+// Helper Function: Real-Time Discord Webhook Alerting dengan User Mention
+const sendDiscordAlert = async (threatType, ip, targetUrl) => {
+    if (!DISCORD_WEBHOOK_URL) return;
+
+    const mentionText = DISCORD_USER_ID
+        ? `<@${DISCORD_USER_ID}> Security alert triggered!`
+        : '🚨 Security alert triggered!';
+
+    const payload = {
+        content: mentionText,
+        allowed_mentions: {
+            users: DISCORD_USER_ID ? [DISCORD_USER_ID] : []
+        },
+        embeds: [
+            {
+                title: "🚨 WAF Security Alert",
+                color: 15548997,
+                fields: [
+                    { name: "Threat Type", value: `\`${threatType}\``, inline: true },
+                    { name: "Source IP", value: `\`${ip}\``, inline: true },
+                    { name: "Target Path", value: `\`${targetUrl}\``, inline: false }
+                ],
+                footer: { text: "WAF Command Center • Action: Blocked" },
+                timestamp: new Date().toISOString()
+            }
+        ]
+    };
+
+    try {
+        const response = await fetch(DISCORD_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            console.error('Discord Webhook error:', await response.text());
+        }
+    } catch (error) {
+        console.error('Gagal mengirim alert ke Discord:', error.message);
+    }
+};
 
 // Konfigurasi Rate Limiter
 const wafRateLimiter = rateLimit({
@@ -61,7 +106,6 @@ app.use(wafRateLimiter);
 
 // Middleware Deteksi Serangan WAF
 const wafMiddleware = async (req, res, next) => {
-    // Lewati pemindaian payload untuk endpoint internal API dashboard
     if (req.path === '/api/login' || req.path === '/api/logs') {
         return next();
     }
@@ -82,6 +126,8 @@ const wafMiddleware = async (req, res, next) => {
         });
         await logBaru.save();
         
+        sendDiscordAlert(threatType, req.ip, url);
+        
         console.log(`[PERINGATAN] Serangan ${threatType} terdeteksi pada URL: ${url}`);
         return res.status(403).send("Akses Ditolak: Aktivitas mencurigakan terdeteksi.");
     }
@@ -93,7 +139,7 @@ app.use(wafMiddleware);
 // Middleware Verifikasi Token JWT
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Format: "Bearer <token>"
+    const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) {
         return res.status(401).json({ message: 'Unauthorized: Access token required.' });
@@ -128,6 +174,8 @@ app.get('/wp-admin', async (req, res) => {
         targetURL: req.url
     });
     await logBaru.save();
+    
+    sendDiscordAlert('Honeypot Triggered', req.ip, req.url);
     
     console.log(`[HONEYPOT] Aktivitas peretasan tertangkap dari IP: ${req.ip}`);
     res.status(401).send("Unauthorized Access: Insiden ini telah dicatat dan dilaporkan.");
